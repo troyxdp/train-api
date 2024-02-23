@@ -7,7 +7,7 @@ import yaml
 
 app = FastAPI()
 
-
+# GET METHODS
 
 @app.get("/test/{item_id}")
 def read_item(item_id: int, q: Union[str, None] = None):
@@ -16,7 +16,6 @@ def read_item(item_id: int, q: Union[str, None] = None):
         return {"value": "sixty-nine"}
     return {"value": data[item_id]}
 
-# GET METHODS
 @app.get("/model-names")
 def get_model_names():
 
@@ -25,6 +24,7 @@ def get_model_names():
 
 
 # POST METHODS
+
 class TrainParameters(BaseModel):
     weights : str
     cfg : str
@@ -63,7 +63,7 @@ class CreateDirectoryOptions(BaseModel):
     copy_old_model_dataset : bool
     old_model_name : Union[str, None] = None
     copy_old_model_weights : bool
-    old_model_weights_path : Union[str, None] = None
+    old_model_weights_name : Union[str, None] = None
 @app.post("/create-new-model-directory")
 def create_new_model_directory(options : CreateDirectoryOptions):
 
@@ -97,6 +97,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
         new_pretrained_weights_path = os.path.join(new_dir_name, "pre-trained-weights")
 
         # Make folders
+        response += "\nAttempting to create new directories..."
         os.mkdir(new_cfg_path)
         os.mkdir(new_data_path)
         os.mkdir(new_dataset_path)
@@ -115,6 +116,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             )
         
         # Copy data across from cfg and pre-trained-weights folders
+        response += "\nAttempting to copy across cfg and pre-trained-weights folders..."
         try:
             copy_directory_contents(v3_cfg_path, new_cfg_path)
             copy_directory_contents(v3_pretrained_weights_path, new_pretrained_weights_path)
@@ -125,6 +127,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
         response += "\nCopied cfg and pre-trained-weights folders across"
         
         # Copy some of the files and info from data folders across
+        response += "\nAttempting to create new intrusion.yaml file..."
         try:
             new_data_yaml_path = os.path.join(new_data_path, "intrusion.yaml")
             data  =  {
@@ -136,19 +139,23 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             }
             with open(new_data_yaml_path, 'w') as yaml_file:
                 yaml.dump(data, yaml_file, default_flow_style=False)
-            yaml_file.close() 
+            response += "\nCreated new intrusion.yaml file"
 
         except Exception:
             response += "\nError: could not create intrusion.yaml file in data folder"
             return {"response" : response}
         
         # Try create train.txt and val.txt files
-        train_txt_path = os.path.join(new_data_path, "train.txt")
-        with open(train_txt_path, 'r') as train_txt:
-            response += "\nCreated train.txt file"
-        val_txt_path = os.path.join(new_data_path, "val.txt")
-        with open(val_txt_path, 'r') as val_txt:
-            response += "\nCreated new val.txt file"
+        response += "\nAttempting to create new train.txt and val.txt files..."
+        try:
+            train_txt_path = os.path.join(new_data_path, "train.txt")
+            with open(train_txt_path, 'w') as train_txt:
+                response += "\nCreated train.txt file"
+            val_txt_path = os.path.join(new_data_path, "val.txt")
+            with open(val_txt_path, 'w') as val_txt:
+                response += "\nCreated new val.txt file"
+        except Exception as e:
+            response += f"Error: could not create train.txt and val.txt files.\n{e}"
 
     except FileNotFoundError:
         response += "\nError: could not create new directories"
@@ -156,19 +163,23 @@ def create_new_model_directory(options : CreateDirectoryOptions):
 
     # Try copy the old dataset and data files across
     if options.copy_old_model_dataset:
+        response += "\nAttempting to copy across dataset from previous model..."
         old_model_dir = os.path.join(train_dir, options.old_model_name)
         if os.path.exists(old_model_dir):
             # Try copy images from dataset across
+            response += "\nAttempting to copy images across..."
             try:
                 old_model_dataset_dir = os.path.join(
                                                 old_model_dir, 
                                                 os.path.join("dataset", "alerts")
                                             )
                 copy_directory_contents(old_model_dataset_dir, new_dataset_path)
+                response += "\nSuccessfully copied images across"
             except Exception:
                 response += "\nError: could not copy dataset from old model across to new model"
                 return {"response" : response}
             # Try copy data from train.txt and val.txt across
+            response += "\nAttempting to copy across train.txt and val.txt files from old model..."
             try:
                 old_model_data_dir = os.path.join(old_model_dir, "data")
                 copy_text_file(old_model_data_dir, new_data_path, "train.txt")
@@ -176,21 +187,34 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             except Exception:
                 response += "\nError: could not copy data from train.txt and val.txt across"
                 {"response" : response}
+            response += "\nSuccessfully copied dataset across from old model"
+        else:
+            response += f"\nError: no model exists with the name '{options.old_model_name}'"
 
     # Try copy across the weights from a previous model
     if options.copy_old_model_weights:
         try:
-            if os.path.isfile(options.old_model_weights_path):
+            # Get old weights path
+            old_weights_path = os.path.join(train_dir, options.old_model_name)
+            old_weights_path = os.path.join(old_weights_path, "output")
+            old_weights_path = os.path.join(old_weights_path, "weights")
+            old_weights_path = os.path.join(old_weights_path, options.old_model_weights_name)
+
+            # Check if old weights path leads to an actual file
+            response += f"Attempting to copy old weights...\n\tPath = {old_weights_path}"
+            if os.path.isfile(old_weights_path):
                 copy_weights_path = os.path.join(
                         new_pretrained_weights_path, 
                         f"{options.old_model_name}.pt"
                     )
-                shutil.copy2(options.old_model_weights_path, copy_weights_path)
+                shutil.copy2(old_weights_path, copy_weights_path)
+            else:
+                response += "\nError: no weights with specified name."
         except AttributeError:
             response += "\nError: no path given to old model's weights"
             return {"response" : response}
-        except Exception:
-            response += "\nError: could not copy old weights across"
+        except Exception as e:
+            response += f"\nError: could not copy old weights across\n{e}"
             return {"response" : response}
 
     # Return response
@@ -200,6 +224,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
 
 
 # Utility functions
+
 def copy_directory_contents(source_dir, destination_dir):
 
     try:
