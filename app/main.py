@@ -1,5 +1,5 @@
-from typing import Union
-from fastapi import FastAPI
+from typing import Union, List
+from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
 import os
 import shutil
@@ -64,7 +64,7 @@ class CreateDirectoryOptions(BaseModel):
     old_model_name : Union[str, None] = None
     copy_old_model_weights : bool
     old_model_weights_name : Union[str, None] = None
-@app.post("/create-new-model-directory")
+@app.post("/create-new-model-directory", status_code=201)
 def create_new_model_directory(options : CreateDirectoryOptions):
 
     # Create response string
@@ -220,6 +220,57 @@ def create_new_model_directory(options : CreateDirectoryOptions):
     # Return response
     response += "\nAll operations executed successfully"
     return {"response" : response}
+
+@app.post("/upload-data/{model_name}")
+def upload_data(model_name : str, files : List[UploadFile] = File(...)):
+
+    response = ""
+    try:
+        data_path = os.path.join(os.getcwd(), "training", model_name, "data")
+        # Iterate through posted files
+        response += "Iterating through submitted files..."
+        for file in files:
+            # File is train.txt file
+            if file.filename[-9:] == "train.txt":
+                response += "\nFound train.txt file..."
+                contents = file.file.read()
+                filename = os.path.join(os.getcwd(), "training", model_name,
+                                        "data", "train.txt")
+                with open(filename, 'ab') as f:
+                    response += f"\nAppending training data to {filename}"
+                    f.write(contents)
+            # File is the val.txt file
+            elif file.filename[-7:] == "val.txt":
+                response += "\nFound val.txt file..."
+                contents = file.file.read()
+                filename = os.path.join(os.getcwd(), "training", model_name,
+                                        "data", "val.txt")
+                with open(filename, 'ab') as f:
+                    response += f"\nAppending validation data to {filename}"
+                    f.write(contents)
+            # File is the test.txt file
+            elif file.filename[-8:] == "test.txt":
+                response += "\nFound test.txt file..."
+                contents = file.file.read()
+                filename = os.path.join(os.getcwd(), "training", model_name,
+                                        "data", "test.txt")
+                with open(filename, 'ab') as f:
+                    response += f"\nAppending testing data to {filename}"
+                    f.write(contents)
+            # File is an image or label file
+            else:
+                response += f"\nOpening {file.filename}..."
+                filename = os.path.join(os.getcwd(), "training", model_name, 
+                                   "dataset", "alerts", file.filename)
+                with open(filename, 'wb') as f:
+                    response += f"\nCopying {file.filename} to {filename}"
+                    shutil.copyfileobj(file.file, f)
+                    # shutil.copy2(f, dataset_path)
+        response += "\nSuccessfully copied files across"
+        return {"response" : response}
+    except Exception as e:
+        response += f"\n{e}"
+        return {"response" : response}
 
 
 
