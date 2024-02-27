@@ -3,9 +3,14 @@ from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
 import os
 import shutil
+import sys
 import yaml
+import logging
 
 app = FastAPI()
+logging.basicConfig(filename="app.log", 
+                    filemode='w', 
+                    format='%(name)s - %(levelname)s - %(message)s')
 
 # GET METHODS
 
@@ -21,15 +26,22 @@ def get_model_names():
 
     return {"response" : os.listdir("/code/training")}
 
+@app.get("/is-training-running/{train_pid}")
+def is_training_running(train_pid : int):
+
+    try:
+        os.kill(train_pid, 0)
+    except OSError:
+        return {"response" : "Training process has stopped running"}
+    else:
+        return {"response" : "Training process is still running"}
+
 
 
 # POST METHODS
 
 class TrainParameters(BaseModel):
     weights : str
-    cfg : str
-    data : str
-    hyp : str
     epochs : int
     batch_size : int
     img_size : int
@@ -42,21 +54,43 @@ def train_model(train_params : TrainParameters):
 
     print("Training model...")
 
-    cmd = "nohup python3 -m torch.distributed.launch --nproc_per_node 2 --master_port 9527 train.py"
+    data = os.path.join(os.getcwd(), "training", train_params.name, "data", "intrusion.yaml")
+    cfg = os.path.join(os.getcwd(), "training", train_params.name, "cfg", "yolov7x.yaml")
+    hyp = os.path.join(os.getcwd(), "training", train_params.name, 
+                       "data", "hyp.scratch.custom.yaml")
+    weights = os.path.join(os.getcwd(), "training", train_params.name, "pre-trained-weights",
+                           train_params.weights)
+
+    # cmd = "nohup python3 -m torch.distributed.launch --nproc_per_node 2 "
+    # cmd += "--master_port 9527 yolov7/train.py --local-rank -1"
+    cmd = "python3 yolov7/train.py"
     cmd += f" --workers {train_params.workers}"
     cmd += f" --device {train_params.device}"
     if train_params.sync_bn:
         cmd += f" --sync-bn"
     cmd += f" --batch-size {train_params.batch_size}"
-    cmd += f" --data {train_params.data}"
+    cmd += f" --data {data}"
     cmd += f" --img-size {train_params.img_size}"
-    cmd += f" --cfg {train_params.cfg}"
-    cmd += f" --weights {train_params.weights}"
+    cmd += f" --cfg {cfg}"
+    cmd += f" --weights {weights}"
     cmd += f" --name {train_params.name}"
-    cmd += f" --hyp {train_params.hyp}"
-    cmd += f" --epochs {train_params.epochs}"
+    cmd += f" --hyp {hyp}"
+    cmd += f" --epochs {train_params.epochs} &"
 
-    return {"response": cmd}
+    process_id = os.fork()
+
+    if process_id > 0:
+        logging.warning(f'Started training process...\n{cmd}')
+        return {"response": process_id}
+    else:
+        try:
+            logging.warning('Attempting to train model from child process...')
+            os.system(cmd)
+            logging.warning('Finished training model')
+        except Exception as e:
+            logging.warning(f'Error: could not train model\nHere is the exception\n{e}')
+        sys.exit(0)
+    
 
 class CreateDirectoryOptions(BaseModel):
     model_name : str
@@ -109,11 +143,13 @@ def create_new_model_directory(options : CreateDirectoryOptions):
         os.mkdir(new_alerts_path)
 
         # Get folder paths from rf_intrusion_yolov7x_v3 for folders to copy across
-        v3_cfg_path = os.path.join(train_dir, os.path.join("rf_intrusion_yolov7x_v3", "cfg"))
+        v3_cfg_path = os.path.join(train_dir, "rf_intrusion_yolov7x_v3", "cfg")
         v3_pretrained_weights_path = os.path.join(
                 train_dir,
-                os.path.join("rf_intrusion_yolov7x_v3", "pre-trained-weights")
+                "rf_intrusion_yolov7x_v3", 
+                "pre-trained-weights"
             )
+        v3_data_path = os.path.join(train_dir, "rf_intrusion_yolov7x_v3", "data")
         
         # Copy data across from cfg and pre-trained-weights folders
         response += "\nAttempting to copy across cfg and pre-trained-weights folders..."
@@ -145,7 +181,15 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             response += "\nError: could not create intrusion.yaml file in data folder"
             return {"response" : response}
         
-        # Try create train.txt and val.txt files
+        # Copy across hyp.scratch.custom.yaml file
+        try:
+            shutil.copy2(os.path.join(v3_data_path, "hyp.scratch.custom.yaml"), 
+                        os.path.join(new_data_path, "hyp.scratch.custom.yaml"))
+        except Exception as e:
+            response += f"\nError: could not copy across hyp.scratch.custom.yaml file\n{e}"
+            return {"response" : response}
+        
+        # Try create train.txt, test.txt, and val.txt files
         response += "\nAttempting to create new train.txt and val.txt files..."
         try:
             train_txt_path = os.path.join(new_data_path, "train.txt")
@@ -154,8 +198,12 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             val_txt_path = os.path.join(new_data_path, "val.txt")
             with open(val_txt_path, 'w') as val_txt:
                 response += "\nCreated new val.txt file"
+            test_txt_path = os.path.join(new_data_path, "test.txt")
+            with open(test_txt_path, 'w') as test_txt:
+                response += "\nCreate new test.txt file"
         except Exception as e:
             response += f"Error: could not create train.txt and val.txt files.\n{e}"
+            return {"response" : response}
 
     except FileNotFoundError:
         response += "\nError: could not create new directories"
@@ -171,7 +219,8 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             try:
                 old_model_dataset_dir = os.path.join(
                                                 old_model_dir, 
-                                                os.path.join("dataset", "alerts")
+                                                "dataset", 
+                                                "alerts"
                                             )
                 copy_directory_contents(old_model_dataset_dir, new_dataset_path)
                 response += "\nSuccessfully copied images across"
@@ -186,19 +235,21 @@ def create_new_model_directory(options : CreateDirectoryOptions):
                 copy_text_file(old_model_data_dir, new_data_path, "val.txt")
             except Exception:
                 response += "\nError: could not copy data from train.txt and val.txt across"
-                {"response" : response}
+                return {"response" : response}
             response += "\nSuccessfully copied dataset across from old model"
         else:
             response += f"\nError: no model exists with the name '{options.old_model_name}'"
+            return {"response" : response}
 
     # Try copy across the weights from a previous model
     if options.copy_old_model_weights:
         try:
             # Get old weights path
-            old_weights_path = os.path.join(train_dir, options.old_model_name)
-            old_weights_path = os.path.join(old_weights_path, "output")
-            old_weights_path = os.path.join(old_weights_path, "weights")
-            old_weights_path = os.path.join(old_weights_path, options.old_model_weights_name)
+            old_weights_path = os.path.join(train_dir, 
+                                            options.old_model_name, 
+                                            "output", 
+                                            "weights", 
+                                            options.old_model_weights_name)
 
             # Check if old weights path leads to an actual file
             response += f"Attempting to copy old weights...\n\tPath = {old_weights_path}"
@@ -218,7 +269,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             return {"response" : response}
 
     # Return response
-    response += "\nAll operations executed successfully"
+    response = "All operations executed successfully"
     return {"response" : response}
 
 @app.post("/upload-data/{model_name}")
@@ -266,7 +317,7 @@ def upload_data(model_name : str, files : List[UploadFile] = File(...)):
                     response += f"\nCopying {file.filename} to {filename}"
                     shutil.copyfileobj(file.file, f)
                     # shutil.copy2(f, dataset_path)
-        response += "\nSuccessfully copied files across"
+        response = "Successfully copied files across"
         return {"response" : response}
     except Exception as e:
         response += f"\n{e}"
