@@ -50,7 +50,7 @@ class TrainParameters(BaseModel):
     workers : int
     name : str
 @app.post("/train-model")
-def train_model(train_params : TrainParameters):
+async def train_model(train_params : TrainParameters):
 
     print("Training model...")
 
@@ -60,10 +60,12 @@ def train_model(train_params : TrainParameters):
                        "data", "hyp.scratch.custom.yaml")
     weights = os.path.join(os.getcwd(), "training", train_params.name, "pre-trained-weights",
                            train_params.weights)
+    output = os.path.join(os.getcwd(), "training", train_params.name, "output")
 
     # cmd = "nohup python3 -m torch.distributed.launch --nproc_per_node 2 "
-    # cmd += "--master_port 9527 yolov7/train.py --local-rank -1"
-    cmd = "python3 yolov7/train.py"
+    # cmd += "--master_port 9527 yolov7/train.py"
+    
+    cmd = "nohup python3 yolov7/train.py"
     cmd += f" --workers {train_params.workers}"
     cmd += f" --device {train_params.device}"
     if train_params.sync_bn:
@@ -74,22 +76,19 @@ def train_model(train_params : TrainParameters):
     cmd += f" --cfg {cfg}"
     cmd += f" --weights {weights}"
     cmd += f" --name {train_params.name}"
+    cmd += f" --project {output}"
     cmd += f" --hyp {hyp}"
     cmd += f" --epochs {train_params.epochs} &"
 
-    process_id = os.fork()
-
-    if process_id > 0:
-        logging.warning(f'Started training process...\n{cmd}')
-        return {"response": process_id}
-    else:
-        try:
-            logging.warning('Attempting to train model from child process...')
-            os.system(cmd)
-            logging.warning('Finished training model')
-        except Exception as e:
-            logging.warning(f'Error: could not train model\nHere is the exception\n{e}')
-        sys.exit(0)
+    try:
+        logging.warning('Attempting to train model from child process...')
+        os.system(cmd)
+        logging.warning('Finished training model')
+        return {"response" : "Trained model"}
+    except Exception as e:
+        logging.warning(f'Error: could not train model\nHere is the exception\n{e}')
+        return {"response" : "Error: could not train model"}
+    
     
 
 class CreateDirectoryOptions(BaseModel):
@@ -167,9 +166,9 @@ def create_new_model_directory(options : CreateDirectoryOptions):
         try:
             new_data_yaml_path = os.path.join(new_data_path, "intrusion.yaml")
             data  =  {
-                "train" : f"/training/{options.model_name}/data/train.txt",
-                "val" : f"/training/{options.model_name}/data/val.txt",  
-                "test" : f"/training/{options.model_name}/data/test.txt",
+                "train" : os.path.join(new_data_path, 'train.txt'),
+                "val" : os.path.join(new_data_path, 'val.txt'),  
+                "test" : os.path.join(new_data_path, 'test.txt'),
                 "nc" : 3,
                 "names" : ['person', 'animal', 'vehicle']
             }
