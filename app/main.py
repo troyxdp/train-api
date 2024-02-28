@@ -1,11 +1,13 @@
 from typing import Union, List
 from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 import os
 import shutil
-import sys
 import yaml
 import logging
+import subprocess
+import asyncio
 
 app = FastAPI()
 logging.basicConfig(filename="app.log", 
@@ -24,17 +26,52 @@ def read_item(item_id: int, q: Union[str, None] = None):
 @app.get("/model-names")
 def get_model_names():
 
-    return {"response" : os.listdir("/code/training")}
+    return {"response" : os.listdir(os.path.join("/code", "training"))}
 
-@app.get("/is-training-running/{train_pid}")
-def is_training_running(train_pid : int):
+@app.get("/get-number-of-output-folders/{model_name}")
+def get_number_of_output_files(model_name : str):
 
-    try:
-        os.kill(train_pid, 0)
-    except OSError:
-        return {"response" : "Training process has stopped running"}
+    model_dir = os.path.join("/code", "training", model_name)
+    if os.path.isdir(model_dir):
+        model_subfolders = os.listdir(model_dir)
+        output_count = 0
+        for folder in model_subfolders:
+            if folder.__contains__("output"):
+                output_count += 1
+        return {"response" : output_count}
     else:
-        return {"response" : "Training process is still running"}
+        return {"response" : -1}
+
+@app.get("/get-list-of-weights/{model_name}/{output}")
+def get_list_of_weights(model_name : str, output : str):
+
+    # Get path of directory weights should be in
+    weights_dir = ""
+    weights_dir = os.path.join("/code", "training", model_name, output, "weights")
+    
+    # Check if weights_dir exists. If it does, return a listing of all the .pt files in it
+    if os.path.isdir(weights_dir):
+        return {"response" : os.listdir(weights_dir)}
+    
+    # weights_dir does not exist. Check why it doesn't and return error message accordingly
+    if os.path.isdir(os.path.join("code", "training", model_name)):
+        return {"response" : f"Error: no such model with model name {model_name} exists"}
+    if os.path.isdir(os.path.join("code", "training", model_name, output)):
+        return {"response" : f"Error: output '{output}' does not exist"}
+    return {"response" : f"Error: no weights directory in {output} folder"}
+
+@app.get("/get-weights-file/{model_name}/{output}/{weights_name}")
+def get_weights(model_name : str, output : str, weights_name : str):
+
+    # Get path to desired weights
+    weights_dir = os.path.join("/code", "training", model_name, output, "weights", weights_name)
+
+    # Return weights file if it exists. Otherwise, return None
+    if os.path.exists(weights_dir):
+        with open(weights_dir, "rb") as file:
+            file_content = file.read()
+        return Response(content=file_content, media_type="application/octet-stream")
+    return None
 
 
 
@@ -51,7 +88,6 @@ class TrainParameters(BaseModel):
     name : str
 @app.post("/train-model")
 async def train_model(train_params : TrainParameters):
-
     print("Training model...")
 
     data = os.path.join(os.getcwd(), "training", train_params.name, "data", "intrusion.yaml")
@@ -60,36 +96,32 @@ async def train_model(train_params : TrainParameters):
                        "data", "hyp.scratch.custom.yaml")
     weights = os.path.join(os.getcwd(), "training", train_params.name, "pre-trained-weights",
                            train_params.weights)
-    output = os.path.join(os.getcwd(), "training", train_params.name, "output")
+    output = os.path.join(os.getcwd(), "training", train_params.name)
 
-    # cmd = "nohup python3 -m torch.distributed.launch --nproc_per_node 2 "
-    # cmd += "--master_port 9527 yolov7/train.py"
-    
-    cmd = "nohup python3 yolov7/train.py"
-    cmd += f" --workers {train_params.workers}"
-    cmd += f" --device {train_params.device}"
+    cmd = ["python3", "yolov7/train.py"]
+    cmd.extend(["--workers", f"{train_params.workers}"])
+    cmd.extend(["--device", f"{train_params.device}"])
     if train_params.sync_bn:
-        cmd += f" --sync-bn"
-    cmd += f" --batch-size {train_params.batch_size}"
-    cmd += f" --data {data}"
-    cmd += f" --img-size {train_params.img_size}"
-    cmd += f" --cfg {cfg}"
-    cmd += f" --weights {weights}"
-    cmd += f" --name {train_params.name}"
-    cmd += f" --project {output}"
-    cmd += f" --hyp {hyp}"
-    cmd += f" --epochs {train_params.epochs} &"
+        cmd.append("--sync-bn")
+    cmd.extend(["--batch-size", f"{train_params.batch_size}"])
+    cmd.extend(["--data", f"{data}"])
+    cmd.extend(["--img-size", f"{train_params.img_size}"])
+    cmd.extend(["--cfg", f"{cfg}"])
+    cmd.extend(["--weights", f"{weights}"])
+    cmd.extend(["--name", "output"])
+    cmd.extend(["--project", f"{output}"])
+    cmd.extend(["--hyp", f"{hyp}"])
+    cmd.extend(["--epochs", f"{train_params.epochs}"])
 
     try:
         logging.warning('Attempting to train model from child process...')
-        os.system(cmd)
+        proc = await asyncio.create_subprocess_exec(*cmd)
+        await proc.wait()
         logging.warning('Finished training model')
-        return {"response" : "Trained model"}
+        return {"response": "Successfully trained model"}
     except Exception as e:
         logging.warning(f'Error: could not train model\nHere is the exception\n{e}')
-        return {"response" : "Error: could not train model"}
-    
-    
+        return {"response": "Error while training model", "error": f"{e}"}
 
 class CreateDirectoryOptions(BaseModel):
     model_name : str

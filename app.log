@@ -2,11 +2,5 @@ uvicorn.error - INFO - Started server process [1]
 uvicorn.error - INFO - Waiting for application startup.
 uvicorn.error - INFO - Application startup complete.
 uvicorn.error - INFO - Uvicorn running on http://0.0.0.0:80 (Press CTRL+C to quit)
-root - WARNING - Started training process...
-nohup python3 yolov7/train.py --workers 1 --device 0 --sync-bn --batch-size 1 --data /code/training/rf_intrusion_yolov7x_v4/data/intrusion.yaml --img-size 640 --cfg /code/training/rf_intrusion_yolov7x_v4/cfg/yolov7x.yaml --weights /code/training/rf_intrusion_yolov7x_v4/pre-trained-weights/rf_intrusion_yolov7x_v3.pt --name rf_intrusion_yolov7x_v4 --project /code/training/rf_intrusion_yolov7x_v4/output --hyp /code/training/rf_intrusion_yolov7x_v4/data/hyp.scratch.custom.yaml --epochs 1 &
 root - WARNING - Attempting to train model from child process...
 root - WARNING - Finished training model
-uvicorn.error - INFO - Shutting down
-uvicorn.error - INFO - Waiting for application shutdown.
-uvicorn.error - INFO - Application shutdown complete.
-uvicorn.error - INFO - Finished server process [1]
