@@ -86,9 +86,8 @@ class TrainParameters(BaseModel):
     sync_bn : bool
     workers : int
     name : str
-@app.post("/train-model")
-async def train_model(train_params : TrainParameters):
-    print("Training model...")
+@app.post("/train-model-yolov7")
+async def train_model_yolov7(train_params : TrainParameters):
 
     data = os.path.join(os.getcwd(), "training", train_params.name, "data", "intrusion.yaml")
     cfg = os.path.join(os.getcwd(), "training", train_params.name, "cfg", "yolov7x.yaml")
@@ -114,13 +113,43 @@ async def train_model(train_params : TrainParameters):
     cmd.extend(["--epochs", f"{train_params.epochs}"])
 
     try:
-        logging.warning('Attempting to train model from child process...')
         proc = await asyncio.create_subprocess_exec(*cmd)
         await proc.wait()
-        logging.warning('Finished training model')
         return {"response": "Successfully trained model"}
     except Exception as e:
-        logging.warning(f'Error: could not train model\nHere is the exception\n{e}')
+        return {"response": "Error while training model", "error": f"{e}"}
+
+@app.post("/train-model-yolov9")
+async def train_model_yolov9(train_params : TrainParameters):
+
+    data = os.path.join(os.getcwd(), "training", train_params.name, "data", "intrusion.yaml")
+    cfg = os.path.join(os.getcwd(), "training", train_params.name, "cfg", "yolov9-e.yaml")
+    hyp = os.path.join(os.getcwd(), "training", train_params.name, 
+                       "data", "hyp.scratch.custom.yaml")
+    weights = os.path.join(os.getcwd(), "training", train_params.name, "pre-trained-weights",
+                           train_params.weights)
+    output = os.path.join(os.getcwd(), "training", train_params.name)
+
+    cmd = ["python3", "yolov9/train_dual.py"]
+    cmd.extend(["--workers", f"{train_params.workers}"])
+    cmd.extend(["--device", f"{train_params.device}"])
+    if train_params.sync_bn:
+        cmd.append("--sync-bn")
+    cmd.extend(["--batch-size", f"{train_params.batch_size}"])
+    cmd.extend(["--data", f"{data}"])
+    cmd.extend(["--img-size", f"{train_params.img_size}"])
+    cmd.extend(["--cfg", f"{cfg}"])
+    cmd.extend(["--weights", f"{weights}"])
+    cmd.extend(["--name", "output"])
+    cmd.extend(["--project", f"{output}"])
+    cmd.extend(["--hyp", f"{hyp}"])
+    cmd.extend(["--epochs", f"{train_params.epochs}"])
+
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd)
+        await proc.wait()
+        return {"response": "Successfully trained model"}
+    except Exception as e:
         return {"response": "Error while training model", "error": f"{e}"}
 
 class CreateDirectoryOptions(BaseModel):
@@ -129,6 +158,7 @@ class CreateDirectoryOptions(BaseModel):
     old_model_name : Union[str, None] = None
     copy_old_model_weights : bool
     old_model_weights_name : Union[str, None] = None
+    model_type : str
 @app.post("/create-new-model-directory", status_code=201)
 def create_new_model_directory(options : CreateDirectoryOptions):
 
@@ -185,8 +215,20 @@ def create_new_model_directory(options : CreateDirectoryOptions):
         # Copy data across from cfg and pre-trained-weights folders
         response += "\nAttempting to copy across cfg and pre-trained-weights folders..."
         try:
-            copy_directory_contents(v3_cfg_path, new_cfg_path)
-            copy_directory_contents(v3_pretrained_weights_path, new_pretrained_weights_path)
+            if options.model_type == "yolov7":
+                copy_directory_contents(v3_cfg_path, new_cfg_path)
+                copy_directory_contents(
+                        v3_pretrained_weights_path, 
+                        new_pretrained_weights_path
+                    )
+            elif options.model_type == "yolov9":
+                yolov9_std_weights_path = os.path.join(os.getcwd(), "yolov9", "weights")
+                yolov9_std_cfg_path = os.path.join(os.getcwd(), "yolov9", "models", "detect")
+                copy_directory_contents(yolov9_std_weights_path, new_pretrained_weights_path)
+                copy_directory_contents(yolov9_std_cfg_path, new_cfg_path)
+            else:
+                response += "\nError: invalid model type selected"
+                return {"response" : response}
 
         except Exception:
             response += "\nError: could not copy standard data across to new model"
