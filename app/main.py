@@ -73,8 +73,6 @@ def get_weights(model_name : str, output : str, weights_name : str):
         return Response(content=file_content, media_type="application/octet-stream")
     return None
 
-
-
 # POST METHODS
 
 class TrainParameters(BaseModel):
@@ -89,13 +87,21 @@ class TrainParameters(BaseModel):
 @app.post("/train-model-yolov7")
 async def train_model_yolov7(train_params : TrainParameters):
 
-    data = os.path.join(os.getcwd(), "training", train_params.name, "data", "intrusion.yaml")
-    cfg = os.path.join(os.getcwd(), "training", train_params.name, "cfg", "yolov7x.yaml")
-    hyp = os.path.join(os.getcwd(), "training", train_params.name, 
-                       "data", "hyp.scratch.custom.yaml")
-    weights = os.path.join(os.getcwd(), "training", train_params.name, "pre-trained-weights",
-                           train_params.weights)
-    output = os.path.join(os.getcwd(), "training", train_params.name)
+    model_path = os.path.join(os.getcwd(), "training", train_params.name)
+    data = os.path.join(model_path, "data", "intrusion.yaml")
+    cfg = os.path.join(model_path, "cfg", "yolov7x.yaml")
+    hyp = os.path.join(model_path, "data", "hyp.scratch.custom.yaml")
+    weights = os.path.join(model_path, "pre-trained-weights", train_params.weights)
+
+    output_path = ""
+    output_count = 0
+    for dir in os.listdir(model_path):
+        if dir.__contains__("output"):
+            output_count += 1
+    if output_count != 0:
+        output_path = os.path.join(model_path, f"output{output_count + 1}")
+    else:
+        output_path = os.path.join(model_path, "output")
 
     cmd = ["python3", "yolov7/train.py"]
     cmd.extend(["--workers", f"{train_params.workers}"])
@@ -108,27 +114,38 @@ async def train_model_yolov7(train_params : TrainParameters):
     cmd.extend(["--cfg", f"{cfg}"])
     cmd.extend(["--weights", f"{weights}"])
     cmd.extend(["--name", "output"])
-    cmd.extend(["--project", f"{output}"])
+    cmd.extend(["--project", f"{model_path}"])
     cmd.extend(["--hyp", f"{hyp}"])
     cmd.extend(["--epochs", f"{train_params.epochs}"])
 
     try:
         proc = await asyncio.create_subprocess_exec(*cmd)
         await proc.wait()
-        return {"response": "Successfully trained model"}
+        if os.path.isfile(os.path.join(output_path, "weights", "best.pt")):
+            return {"response": "Successfully finished training"}
+        else:
+            return {"response": f"Error: a failure occurred during training.\n{output_path}"}
     except Exception as e:
         return {"response": "Error while training model", "error": f"{e}"}
 
 @app.post("/train-model-yolov9")
 async def train_model_yolov9(train_params : TrainParameters):
 
-    data = os.path.join(os.getcwd(), "training", train_params.name, "data", "intrusion.yaml")
-    cfg = os.path.join(os.getcwd(), "training", train_params.name, "cfg", "yolov9-e.yaml")
-    hyp = os.path.join(os.getcwd(), "training", train_params.name, 
-                       "data", "hyp.scratch.custom.yaml")
-    weights = os.path.join(os.getcwd(), "training", train_params.name, "pre-trained-weights",
-                           train_params.weights)
-    output = os.path.join(os.getcwd(), "training", train_params.name)
+    model_path = os.path.join(os.getcwd(), "training", train_params.name)
+    data = os.path.join(model_path, "data", "intrusion.yaml")
+    cfg = os.path.join(model_path, "cfg", "yolov9-e.yaml")
+    hyp = os.path.join(model_path, "data", "hyp.scratch.custom.yaml")
+    weights = os.path.join(model_path, "pre-trained-weights", train_params.weights)
+
+    output_path = ""
+    output_count = 0
+    for dir in os.listdir(model_path):
+        if dir.__contains__("output"):
+            output_count += 1
+    if output_count != 0:
+        output_path = os.path.join(model_path, f"output{output_count + 1}")
+    else:
+        output_path = os.path.join(model_path, "output")
 
     cmd = ["python3", "yolov9/train_dual.py"]
     cmd.extend(["--workers", f"{train_params.workers}"])
@@ -141,22 +158,26 @@ async def train_model_yolov9(train_params : TrainParameters):
     cmd.extend(["--cfg", f"{cfg}"])
     cmd.extend(["--weights", f"{weights}"])
     cmd.extend(["--name", "output"])
-    cmd.extend(["--project", f"{output}"])
+    cmd.extend(["--project", f"{model_path}"])
     cmd.extend(["--hyp", f"{hyp}"])
     cmd.extend(["--epochs", f"{train_params.epochs}"])
 
     try:
         proc = await asyncio.create_subprocess_exec(*cmd)
         await proc.wait()
-        return {"response": "Successfully trained model"}
+        if os.path.isfile(os.path.join(output_path, "weights", "best.pt")):
+            return {"response": "Successfully finished training"}
+        else:
+            return {"response": "Error: a failure occurred during training"}
     except Exception as e:
-        return {"response": "Error while training model", "error": f"{e}"}
+        return {"response": "Error: an error occurred while training model", "error": f"{e}"}
 
 class CreateDirectoryOptions(BaseModel):
     model_name : str
     copy_old_model_dataset : bool
     old_model_name : Union[str, None] = None
     copy_old_model_weights : bool
+    old_model_weights_folder : Union[str, None] = None
     old_model_weights_name : Union[str, None] = None
     model_type : str
 @app.post("/create-new-model-directory", status_code=201)
@@ -217,10 +238,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
         try:
             if options.model_type == "yolov7":
                 copy_directory_contents(v3_cfg_path, new_cfg_path)
-                copy_directory_contents(
-                        v3_pretrained_weights_path, 
-                        new_pretrained_weights_path
-                    )
+                copy_directory_contents(v3_pretrained_weights_path, new_pretrained_weights_path)
             elif options.model_type == "yolov9":
                 yolov9_std_weights_path = os.path.join(os.getcwd(), "yolov9", "weights")
                 yolov9_std_cfg_path = os.path.join(os.getcwd(), "yolov9", "models", "detect")
@@ -320,7 +338,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
             # Get old weights path
             old_weights_path = os.path.join(train_dir, 
                                             options.old_model_name, 
-                                            "output", 
+                                            options.old_model_weights_folder, 
                                             "weights", 
                                             options.old_model_weights_name)
 
@@ -334,9 +352,7 @@ def create_new_model_directory(options : CreateDirectoryOptions):
                 shutil.copy2(old_weights_path, copy_weights_path)
             else:
                 response += "\nError: no weights with specified name."
-        except AttributeError:
-            response += "\nError: no path given to old model's weights"
-            return {"response" : response}
+                return {"response" : response}
         except Exception as e:
             response += f"\nError: could not copy old weights across\n{e}"
             return {"response" : response}
@@ -389,7 +405,6 @@ def upload_data(model_name : str, files : List[UploadFile] = File(...)):
                 with open(filename, 'wb') as f:
                     response += f"\nCopying {file.filename} to {filename}"
                     shutil.copyfileobj(file.file, f)
-                    # shutil.copy2(f, dataset_path)
         response = "Successfully copied files across"
         return {"response" : response}
     except Exception as e:
