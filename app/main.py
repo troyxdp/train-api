@@ -60,6 +60,20 @@ def get_list_of_weights(model_name : str, output : str):
         return {"response" : f"Error: output '{output}' does not exist"}
     return {"response" : f"Error: no weights directory in {output} folder"}
 
+@app.get("/get-pre-trained-weights/{model_name}")
+def get_pre_trained_weights(model_name : str):
+
+    # Get path of pre-trained weights
+    weights_dir = os.path.join("/code", "training", model_name, "pre-trained-weights")
+
+    # Check if weights dir exists. If it does, return a listing of all the .pt files in it
+    if os.path.isdir(weights_dir):
+        return {"response" : os.listdir(weights_dir)}
+    
+    if os.path.isdir(os.path.join("code", "training", model_name)):
+        return {"response" : f"Error: no such model with model name {model_name} exists"}
+    return {"response" : f"Error: pre-trained-weights directory does not exist in {model_name}"}
+
 @app.get("/get-weights-file/{model_name}/{output}/{weights_name}")
 def get_weights(model_name : str, output : str, weights_name : str):
 
